@@ -1,6 +1,11 @@
+# Python / Streamlit
 __pycache__/
-*.pyc
+*.py[cod]
 .venv/
-build/
-*.pdf
-!samples/*.pdf
+venv/
+.env
+.streamlit/secrets.toml
+
+# OS junk
+.DS_Store
+Thumbs.db
