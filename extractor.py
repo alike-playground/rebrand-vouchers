@@ -158,97 +158,151 @@ def parse_flights(text: str) -> Tuple[Optional[dict], Optional[dict]]:
 
 
 def parse_hotels(text: str) -> List[dict]:
-    """TravClan formats vary: sometimes hotel name is on the same line as
-    'Check in - date' (Jash pattern), sometimes 1-2 lines above (Nilesh
-    pattern). Anchor on each 'Check in - DATE' line and walk backward
-    through preceding lines to find the first name-like line."""
-    m = re.search(r"Hotels\s*(.+?)(?:Trip\s*Itinerary|Itinerary|Terms|$)",
-                  text, re.IGNORECASE | re.DOTALL)
-    if not m:
-        return []
-    block = m.group(1)
-    lines = block.split("\n")
+    """Extract hotels from the voucher OCR text.
+
+    Two OCR layouts are possible:
+     1. **Single-column** (Jash, Nilesh, Rajendra): hotel name is adjacent
+        (same line or 1-2 lines away) to its 'Check in - date' marker.
+        Both blocks live inside a 'Hotels' section between Guests Details
+        and Itinerary.
+     2. **Two-column** (Virat): the left column has hotel name / location
+        / rooms / room-type / meal, and the right column has confirmation
+        no / check-in / check-out. OCR reads left column top-to-bottom
+        first, then right column. Result: hotel names appear early in the
+        OCR text, but check-in dates appear far later (after Itinerary).
+
+    Strategy: find hotel-info blocks (anchored on 'Rooms & Guests') and
+    check-in-info blocks (anchored on 'Check in - date') separately, then
+    pair them by order.
+    """
+    # Slice from after Guest Details (or start) to before Terms
+    body_m = re.search(r"(?:Guests?\s*Details|Booking\s*Id)(.+?)(?:Terms?\s*&\s*Conditions?|Thank you|$)",
+                       text, re.IGNORECASE | re.DOTALL)
+    body = body_m.group(1) if body_m else text
+    lines = body.split("\n")
 
     check_in_re  = re.compile(rf"Check\s*in\s*-\s*({DATE}(?:\s*\|\s*{TIME})?)", re.IGNORECASE)
-    check_out_re = re.compile(r"Check\s*out\s*-\s*([^\n]+)", re.IGNORECASE)
+    check_out_re = re.compile(rf"Check\s*out\s*-\s*([^\n]+)", re.IGNORECASE)
+    rooms_re     = re.compile(r"Rooms?\s*&\s*Guests?\s*-\s*([^\n]+)", re.IGNORECASE)
+    room_type_re = re.compile(r"Room\s*Type\s*-\s*([^\n]+)", re.IGNORECASE)
+    meal_re      = re.compile(r"Meal\s*Type\s*-\s*([A-Z]{2,3})", re.IGNORECASE)
 
     def is_noise(l):
         s = l.strip()
-        if not s:
+        if not s: return True
+        if len(s) < 12 and re.fullmatch(r"[k\*e\u2605\u25c6\s\|tK,;.FOI]+", s, re.IGNORECASE):
             return True
-        if len(s) < 12 and re.fullmatch(r"[k\*e\u2605\u25c6\s\|tK,;.]+", s, re.IGNORECASE):
-            return True
-        if re.match(r"^\s*Confirmation\s*No", s, re.IGNORECASE):
-            return True
-        if re.match(r"^\s*(Rooms?|Room Type|Meal Type|Remarks)\b", s, re.IGNORECASE):
-            return True
-        if re.match(r"^\s*Check\s*(in|out)\b", s, re.IGNORECASE):
-            return True
+        # Only filter lines that START with 'Confirmation No' as noise (i.e.
+        # standalone confirmation lines). Lines where 'Confirmation No'
+        # appears at the end after a hotel name have their trail stripped
+        # in strip_trails() instead.
+        if re.match(r"^\s*Confirmation\s*No", s, re.IGNORECASE): return True
+        if re.match(r"^\s*(Rooms?|Room Type|Meal Type|Remarks)\b", s, re.IGNORECASE): return True
+        # A line that starts with just OCR-of-stars noise before 'Check in/out'
+        # is not a name candidate.
+        starts_with_check = re.match(r"^\s*([^\n]{0,25}?)Check\s*(in|out)\s*-", s, re.IGNORECASE)
+        if starts_with_check:
+            prefix = starts_with_check.group(1).strip()
+            if not prefix:
+                return True
+            if len(prefix) < 20 and re.fullmatch(r"[k\*e\u2605\u25c6\s\|tK,;.FOIaeiouy]+", prefix, re.IGNORECASE):
+                return True
         return False
+
+    def strip_trails(s):
+        """Remove ' Check in - ...', ' Check out - ...', or ' Confirmation
+        No - ...' trailers from a line so what remains is just the hotel
+        name."""
+        s = re.sub(r"\s*Check\s*(in|out)\s*-.*$", "", s, flags=re.IGNORECASE)
+        s = re.sub(r"\s*Confirmation\s*No\s*-.*$", "", s, flags=re.IGNORECASE)
+        return s.strip()
 
     def looks_like_name(l):
         s = re.sub(r"\s*Confirmation\s*No[^\n]*$", "", l, flags=re.IGNORECASE).strip()
         s = re.sub(r"^[^A-Za-z0-9]+", "", s).strip()
-        if len(s) < 4:
-            return False
+        if len(s) < 4: return False
         return sum(c.isalpha() for c in s) >= 4 and any(c.isupper() for c in s)
 
-    hotels = []
+    # 1) Hotel-info blocks — anchored on 'Rooms & Guests' (every hotel has one)
+    hotel_infos = []
     for idx, ln in enumerate(lines):
-        mm = check_in_re.search(ln)
-        if not mm:
+        if not rooms_re.search(ln):
             continue
-        before = ln[:mm.start()].strip()
-        name = None
-        if before and not is_noise(before) and looks_like_name(before):
-            name = re.sub(r"\s*Confirmation\s*No[^\n]*$", "", before, flags=re.IGNORECASE).strip()
-            name = re.sub(r"^[^A-Za-z0-9]+", "", name).strip()
-        if not name:
-            for k in range(idx - 1, max(idx - 6, -1), -1):
-                prev = lines[k].strip()
-                if not prev or is_noise(prev):
-                    continue
-                if looks_like_name(prev):
-                    name = re.sub(r"\s*Confirmation\s*No[^\n]*$", "", prev, flags=re.IGNORECASE).strip()
-                    name = re.sub(r"^[^A-Za-z0-9]+", "", name).strip()
-                    break
-        if not name:
-            continue
-
-        h = {"name": _clean(name), "check_in": _clean(mm.group(1))}
-
-        forward = lines[idx+1:idx+16]
-        for i2, l in enumerate(forward):
-            if check_in_re.search(l):
-                forward = forward[:i2]
-                break
-
-        for l in forward:
-            if not l.strip():
+        # Walk back through non-noise lines. The nearest non-noise line
+        # before Rooms is the location (city). The one before that is
+        # the hotel name (may have a 'Check in - date' or 'Confirmation
+        # No - X' trailer OCR'd from a same-line layout — strip those).
+        prior_lines = []
+        for k in range(idx - 1, max(idx - 10, -1), -1):
+            prev = lines[k].strip()
+            if not prev or is_noise(prev):
                 continue
-            mco = check_out_re.search(l)
-            if mco and "check_out" not in h:
-                h["check_out"] = _clean(mco.group(1)); continue
-            mr = re.search(r"Rooms?\s*&\s*Guests?\s*-\s*(.+)", l, re.IGNORECASE)
+            cleaned = strip_trails(prev)
+            cleaned = re.sub(r"^[^A-Za-z0-9]+", "", cleaned).strip()
+            if cleaned:
+                prior_lines.append(cleaned)
+            if len(prior_lines) >= 3:
+                break
+        location = None
+        name = None
+        if len(prior_lines) >= 1:
+            # In both single-column and two-column layouts, the closest
+            # non-noise line above Rooms is the location (city). The next
+            # closest is the hotel name.
+            if len(prior_lines) >= 2:
+                location = _clean(prior_lines[0])
+                name = _clean(prior_lines[1])
+            else:
+                # Only one candidate — treat as name if it's substantial,
+                # otherwise as location
+                candidate = prior_lines[0]
+                if len(candidate) > 15 or re.search(r"(hotel|resort|villa|inn|palace|suite|spa)", candidate, re.IGNORECASE):
+                    name = _clean(candidate)
+                else:
+                    location = _clean(candidate)
+        if not name:
+            continue
+        h = {"name": name}
+        if location: h["location"] = location
+        # Extract Rooms/Room Type/Meal from the current and next few lines
+        for l in lines[idx:idx+5]:
+            mr = rooms_re.search(l)
             if mr and "rooms_guests" not in h:
-                h["rooms_guests"] = _clean(mr.group(1)).replace("|", "\u00b7"); continue
-            mt = re.search(r"Room\s*Type\s*-\s*(.+)", l, re.IGNORECASE)
+                h["rooms_guests"] = _clean(mr.group(1)).replace("|", "\u00b7")
+            mt = room_type_re.search(l)
             if mt and "room_type" not in h:
-                h["room_type"] = _clean(mt.group(1)); continue
-            mp = re.search(r"Meal\s*Type\s*-\s*([A-Z]{2,3})", l, re.IGNORECASE)
+                h["room_type"] = _clean(mt.group(1))
+            mp = meal_re.search(l)
             if mp and "meal_plan" not in h:
                 code = _clean(mp.group(1)).upper()
                 h["meal_plan"] = {"CP": "Breakfast", "MAP": "Half Board",
                                   "AP": "Full Board", "EP": "Room Only"}.get(code, code)
-                continue
-            if "location" not in h and not is_noise(l):
-                if " - " not in l:
-                    loc = re.sub(r"^[^A-Za-z0-9]+", "", l).strip()
-                    if 2 < len(loc) < 60 and any(c.isalpha() for c in loc):
-                        h["location"] = _clean(loc)
-        hotels.append(h)
-    return hotels
+        hotel_infos.append(h)
 
+    # 2) Check-in blocks — anchored on 'Check in - date'
+    checkin_infos = []
+    for idx, ln in enumerate(lines):
+        mm = check_in_re.search(ln)
+        if not mm:
+            continue
+        ci = {"check_in": _clean(mm.group(1))}
+        # Check-out usually on the next non-empty line
+        for l in lines[idx+1:idx+4]:
+            mco = check_out_re.search(l)
+            if mco:
+                ci["check_out"] = _clean(mco.group(1))
+                break
+        checkin_infos.append(ci)
+
+    # 3) Pair by order — first hotel_info with first checkin_info, etc.
+    # If counts don't match, still return whatever we can.
+    hotels = []
+    for i, h in enumerate(hotel_infos):
+        if i < len(checkin_infos):
+            h.update(checkin_infos[i])
+        hotels.append(h)
+
+    return hotels
 def parse_days(text: str) -> List[dict]:
     m = re.search(r"(?:Trip\s+)?Itinerary\s*(.+?)(?:Terms?\s*&\s*Conditions?|Thank you|$)",
                   text, re.IGNORECASE | re.DOTALL)
@@ -365,8 +419,9 @@ def _parse_day_stops(chunk: str) -> List[dict]:
 
 def parse_terms(text: str) -> List[str]:
     """Terms can be formatted as bullet lists (Jash, Nilesh) or as
-    blank-line-separated paragraphs (Sachin). Try both strategies and
-    prefer whichever produces more items."""
+    blank-line-separated paragraphs (Sachin, Rajendra). Try both
+    strategies and pick the one that gives a clean, non-fragmented
+    result."""
     m = re.search(r"Terms?\s*&\s*Conditions?\s*(.+?)(?:Thank you|$)",
                   text, re.IGNORECASE | re.DOTALL)
     if not m:
@@ -383,26 +438,58 @@ def parse_terms(text: str) -> List[str]:
             if 15 < len(sub) < 700 and not sub.lower().startswith(("thank", "have a safe")):
                 parsed_a.append(sub)
 
-    # Strategy B: blank-line paragraphs
-    paragraphs = re.split(r"\n\s*\n", block)
-    parsed_b = []
-    for para in paragraphs:
-        # Collapse multi-line paragraphs into one line
-        joined = _clean(para)
-        if 15 < len(joined) < 700 and not joined.lower().startswith(("thank", "have a safe")):
-            parsed_b.append(joined)
+    # Strategy B: blank-line paragraphs, then merge fragments that OCR
+    # soft-broke apart. Rule: if the previous item ends with sentence-
+    # ending punctuation (. ! ?), start a new term; otherwise the current
+    # line is a continuation and gets merged into the previous.
+    raw_paras = [_clean(p) for p in re.split(r"\n\s*\n", block) if _clean(p)]
+    merged = []
+    for p in raw_paras:
+        if merged:
+            prev = merged[-1]
+            if prev.rstrip()[-1:] not in ".!?":
+                merged[-1] = f"{prev} {p}"
+                continue
+        merged.append(p)
 
-    # Pick a strategy: prefer bullet-based (A) when it produced at least
-    # a few items — this is the well-structured Jash/Nilesh case. Only
-    # fall back to blank-line paragraph splitting (B) when A found almost
-    # nothing (the un-bulleted Sachin case).
-    # Choose strategy: paragraph-based (B) wins if it produces >=50% more
-    # items than bullet-based (A) — this catches vouchers like Sachin and
-    # Rajendra where OCR doesn't preserve bullet glyphs. Otherwise trust
-    # the bullet-based split, provided it produced a reasonable count.
-    if len(parsed_b) >= max(5, len(parsed_a) * 1.5):
+    # Sanitize any residual vendor URLs (e.g. TravClan CDN links to
+    # third-party forms) — replace with a neutral note. Keep any Alike/
+    # official URLs untouched.
+    def _sanitize(s: str) -> str:
+        # Strip any URL that contains 'travclan' (case-insensitive)
+        return re.sub(r"https?://\S*travclan\S*", "(link available on request)",
+                      s, flags=re.IGNORECASE)
+
+    parsed_b = [_sanitize(x) for x in merged
+                if 15 < len(x) < 1200 and not x.lower().startswith(("thank", "have a safe"))]
+
+    # Also sanitize strategy A output
+    parsed_a = [_sanitize(x) for x in parsed_a]
+
+    # Choose whichever produces a reasonable, non-fragmented result. If
+    # both look sensible, prefer the one that produces MORE items (more
+    # terms extracted is generally better than fewer) but only if the
+    # winner is under a reasonable ceiling that suggests genuine content
+    # rather than over-fragmentation.
+    def looks_fragmented(items):
+        if not items:
+            return False
+        # Fragments: items that don't end with sentence-ending punctuation
+        no_end = sum(1 for x in items if x.rstrip()[-1:] not in ".!?:")
+        return no_end / len(items) > 0.35
+
+    a_ok = parsed_a and not looks_fragmented(parsed_a)
+    b_ok = parsed_b and not looks_fragmented(parsed_b)
+
+    if a_ok and b_ok:
+        # Both look clean; prefer the one with more items
+        return parsed_a if len(parsed_a) >= len(parsed_b) else parsed_b
+    if a_ok:
+        return parsed_a
+    if b_ok:
         return parsed_b
-    return parsed_a if len(parsed_a) >= 5 else parsed_b
+    # Both look fragmented — fall back to whichever has more content
+    return parsed_a if len(parsed_a) >= len(parsed_b) else parsed_b
 
 
 def _match_thumbs_to_stops(pdf_path: str, thumb_dir: str,
@@ -566,6 +653,7 @@ def extract(pdf_path: str, thumb_dir: Optional[str] = None) -> dict:
         },
         "_ocr_pages_raw": pages,
         "_ocr_warnings":  _sanity_check(meta, hotels, days, guests, arrival, departure),
+        "_vendor_booking_id": meta.get("vendor_booking_id", ""),
     }
 
 
