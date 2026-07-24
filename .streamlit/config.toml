@@ -1,0 +1,7 @@
+# aliketools warm-paper theme (tokens per hub/BRANDING.md)
+[theme]
+base = "light"
+primaryColor = "#ff7f41"
+backgroundColor = "#f7f5f2"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#2b2823"
