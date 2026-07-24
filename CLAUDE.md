@@ -8,6 +8,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Ops flow: upload TravClan PDF → Tesseract OCR pre-fills a data model → ops verifies/edits in the form and adds Infinity Booking ID + Travel Advisor + on-ground contact → render PDF → compliance scan → download (button disabled if scan fails).
 
+## Branding (2026-07, per hub/BRANDING.md)
+
+Warm-paper theme in `.streamlit/config.toml`; aliketools header card (inline
+`_ALIKE_LOGO` svg, tool name "Rebrand Vouchers"); ToolGuide via `st.dialog` —
+auto-opens once per session, then the "? How to use" FAB (an `st.button`
+pinned bottom-right through its `.st-key-tg_fab` class, so streamlit must
+stay ≥1.39). ⚠ The guide triggers sit ABOVE the upload step's `st.stop()`
+early-exit on purpose — code after that line never runs on a fresh page.
+The voucher output pipeline (templates/, renderer.py, compliance.py) is
+customer collateral and was not touched.
+
 ## Commands
 
 ```bash
