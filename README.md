@@ -115,3 +115,12 @@ The tool handles the full observed variance in TravClan vouchers:
   first render. If it persists, delete `static/img/alike_*.png` and re-clone.
 - **OCR is slow** — first-time page is ~4-6s; a full 5-page voucher takes ~25s.
   This is Tesseract at 300 DPI; runs on any laptop.
+
+## Design & how-to guide
+
+Carries the aliketools design language: warm-paper theme via
+`.streamlit/config.toml` and the Alike header card (see the hub repo's
+`BRANDING.md`). A "How to use" dialog opens once per session; afterwards the
+**? How to use** pill at the bottom-right reopens it (an `st.button` pinned
+via its `.st-key-tg_fab` class — requires streamlit ≥1.39). The voucher PDF
+output is untouched by the theming.
