@@ -4,13 +4,13 @@ Converts TravClan B2B booking vouchers into Alike-branded B2C vouchers.
 Fully offline — no API calls, no LLM, no external service dependencies.
 
 > **aliketools migration status (Phase 1, 2026-07).** This repo (copied from
-> `Alike-io/alike-voucher`, which is being decommissioned) is now canonical.
-> The **Rebrand Vouchers** tile on [aliketools](https://aliketools.dev) links
-> out to the live Streamlit Cloud app at
-> <https://voucher-creator-alike.streamlit.app/> — which still deploys from
-> the *original* Alike-io repo. Before that repo is deleted, re-deploy
-> Streamlit Cloud from this repo (or re-platform); otherwise the tile goes
-> dead. Re-platforming behind Cloudflare is planned for a later update.
+> `Alike-io/alike-voucher`, which is being decommissioned) is canonical and
+> is what Streamlit Cloud deploys from. The **Rebrand Vouchers** tile on
+> [aliketools](https://aliketools.dev) links out to the live app at
+> <https://rebrand-vouchers-alike.streamlit.app/>. The repo is deliberately
+> **public** — free Streamlit Cloud only deploys public repos; the tool holds
+> no secrets by design. Re-platforming behind Cloudflare Access is planned
+> for a later update.
 
 ## What it does
 
