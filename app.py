@@ -74,6 +74,17 @@ voucher passes a compliance scan before it can be downloaded.
     )
 
 
+# ToolGuide triggers — MUST live above the upload flow's st.stop() early-exit,
+# or they never run on a fresh page. The FAB is position:fixed, so its DOM
+# position here doesn't affect where it appears.
+if st.button("? How to use", key="tg_fab"):
+    _show_guide()
+
+if not st.session_state.get("_guide_shown"):
+    st.session_state["_guide_shown"] = True
+    _show_guide()
+
+
 # --- session state -----------------------------------------------------
 
 if "data" not in st.session_state:
@@ -335,12 +346,3 @@ if st.session_state["pdf_bytes"]:
                        disabled=not ok)
 
 
-
-# --- ToolGuide triggers (button is styled+pinned by the CSS in the header) ---
-
-if st.button("? How to use", key="tg_fab"):
-    _show_guide()
-
-if not st.session_state.get("_guide_shown"):
-    st.session_state["_guide_shown"] = True
-    _show_guide()
