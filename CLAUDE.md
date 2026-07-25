@@ -16,6 +16,9 @@ auto-opens once per session, then the "? How to use" FAB (an `st.button`
 pinned bottom-right through its `.st-key-tg_fab` class, so streamlit must
 stay ≥1.39). ⚠ The guide triggers sit ABOVE the upload step's `st.stop()`
 early-exit on purpose — code after that line never runs on a fresh page.
+⚠ GitHub web uploads of `app.py` from an old base WIPE this branding block
+(happened 2026-07-24) — after any "Add files via upload" commit touching
+app.py, check the header/ToolGuide survived and re-apply if not.
 The voucher output pipeline (templates/, renderer.py, compliance.py) is
 customer collateral and was not touched.
 
@@ -64,6 +67,7 @@ app.py (Streamlit UI, session state, form widgets)
 - FORBIDDEN tokens (hard fail, ❌): `travclan`, `ontrip`/`on trip`, `query code`, `created by`, known TravClan phone `919116037503`, vendor app CTAs, and the `₹` symbol (vouchers must not show INR pricing; USD tipping guidance is allowed).
 - REQUIRED tokens (hard fail if missing): `alike`, `care@alike.io`, `88000 25030`, `Booking`.
 - Heuristic vendor-slug detector (⚠ warning only): 6-char `t`-prefixed alphanumerics mixing letters and digits, with an English-word whitelist.
+- **Vendor booking-ID leak check** (2026-07-24): `extract()` returns `_vendor_booking_id` (popped by app.py into session state) and `scan(pdf, vendor_booking_id=…)` hard-fails if that exact slug is still in the output — catches ops forgetting to replace TravClan's ref with the Infinity Order ID. Worth porting to rebrand-vouchers-next.
 
 `app.py` disables the download button unless the scan passes. If you change voucher content, keep the REQUIRED tokens present and never reintroduce vendor identifiers.
 
