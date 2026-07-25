@@ -67,7 +67,7 @@ app.py (Streamlit UI, session state, form widgets)
 - FORBIDDEN tokens (hard fail, ❌): `travclan`, `ontrip`/`on trip`, `query code`, `created by`, known TravClan phone `919116037503`, vendor app CTAs, and the `₹` symbol (vouchers must not show INR pricing; USD tipping guidance is allowed).
 - REQUIRED tokens (hard fail if missing): `alike`, `care@alike.io`, `88000 25030`, `Booking`.
 - Heuristic vendor-slug detector (⚠ warning only): 6-char `t`-prefixed alphanumerics mixing letters and digits, with an English-word whitelist.
-- **Vendor booking-ID leak check** (2026-07-24): `extract()` returns `_vendor_booking_id` (popped by app.py into session state) and `scan(pdf, vendor_booking_id=…)` hard-fails if that exact slug is still in the output — catches ops forgetting to replace TravClan's ref with the Infinity Order ID. Worth porting to rebrand-vouchers-next.
+- **Vendor booking-ID leak check** (2026-07-24): `extract()` returns `_vendor_booking_id` (popped by app.py into session state) and `scan(pdf, vendor_booking_id=…)` hard-fails if that exact slug is still in the output — catches ops forgetting to replace TravClan's ref with the Infinity Order ID. (Ported to rebrand-vouchers-next same day as `vendor_booking_ref` + client-side check.)
 
 `app.py` disables the download button unless the scan passes. If you change voucher content, keep the REQUIRED tokens present and never reintroduce vendor identifiers.
 
