@@ -310,8 +310,10 @@ def parse_days(text: str) -> List[dict]:
         return []
     block = m.group(1)
 
+    # Weekday is optional: confirmed vouchers read "Day 1: Sat, 08 Aug, 2026"
+    # while tentative vouchers read "Day 1: 05 Aug 2026" (no weekday).
     day_pattern = re.compile(
-        rf"[\|\s]*Day\s+(\d+):\s*([A-Za-z]{{3}}[a-z]*),?\s*({DATE})",
+        rf"[\|\s]*Day\s+(\d+):\s*(?:([A-Za-z]{{3}}[a-z]*),?\s+)?({DATE})",
         re.IGNORECASE)
     matches = list(day_pattern.finditer(block))
     days = []
@@ -319,7 +321,7 @@ def parse_days(text: str) -> List[dict]:
         n = int(dm.group(1))
         weekday = dm.group(2)
         date_part = _clean(dm.group(3))
-        date_display = f"{weekday}, {date_part}"
+        date_display = f"{weekday}, {date_part}" if weekday else date_part
         start = dm.end()
         end = matches[i+1].start() if i + 1 < len(matches) else len(block)
         chunk = block[start:end]
@@ -331,6 +333,34 @@ def parse_days(text: str) -> List[dict]:
         stops = _parse_day_stops(chunk)
         days.append({"n": n, "date_display": date_display, "stops": stops})
     return days
+
+
+# Tour-type badge labels (BUG2). Edit RHS to change customer-facing wording.
+_TOUR_TYPE_LABELS = {
+    "PRIVATE":       "Private",
+    "SIC":           "SIC (Shared)",
+    "SEAT-IN-COACH": "SIC (Shared)",
+    "SEAT IN COACH": "SIC (Shared)",
+    "TICKETS ONLY":  "Tickets Only",
+    "TICKET ONLY":   "Tickets Only",
+}
+
+def _tour_type_label(stop_type: str):
+    """Map the OCR'd tag to a customer label, or None for transfer/cab stops."""
+    key = re.sub(r"\s+", " ", (stop_type or "").upper()).strip()
+    key = key.replace("SEAT-IN-COACH", "SEAT IN COACH")
+    return _TOUR_TYPE_LABELS.get(key)
+
+# Return / drop time (BUG1). SIC stops read "Return Pick up time - 01:00 PM".
+_RETURN_TIME_RE = re.compile(
+    r"(?:Return\s*Pick\s*up\s*time|Drop\s*time)\s*[-–:]\s*"
+    r"([0-9]{1,2}[:.]?[0-9]{0,2}\s*[AaPp]\.?[Mm]\.?)")
+
+def _find_drop_time(block: str):
+    m = _RETURN_TIME_RE.search(block or "")
+    if not m:
+        return None
+    return re.sub(r"\s+", " ", m.group(1)).upper().replace(".", "").strip()
 
 
 def _parse_day_stops(chunk: str) -> List[dict]:
@@ -388,6 +418,10 @@ def _parse_day_stops(chunk: str) -> List[dict]:
         pt = re.search(r"Pickup\s*time\s*-\s*([^\n]+)", body, re.IGNORECASE)
         if pt:
             pickup_time = _clean(pt.group(1))
+            # On SIC stops the pickup + return times share one OCR line
+            # ("... 02:00 PM Return Pick up time - 08:30 PM"). Keep only the
+            # pickup time; the return time is captured separately as drop_time.
+            pickup_time = re.split(r"\s*Return\s*Pick", pickup_time, flags=re.IGNORECASE)[0].strip()
 
         # Remarks (single line following)
         rmk = re.search(r"Remarks:\s*([^\n]+)", body, re.IGNORECASE)
@@ -408,14 +442,33 @@ def _parse_day_stops(chunk: str) -> List[dict]:
             desc = _clean(para)
             break
 
+        # Tour-type badge (BUG2): PRIVATE / SIC / TICKETS ONLY / SEAT-IN-COACH
+        # are shown to the customer. Cab-count descriptors (transfers) are not.
+        tour_type = _tour_type_label(stop_type)
+
+        # Drop / return-pickup time (BUG1): SIC activity stops carry a
+        # "Return Pick up time - HH:MM PM". Private/transfer stops have none.
+        drop_time = _find_drop_time(body)
+
         stop = {"title": title}
+        if tour_type:   stop["tour_type"] = tour_type
         if pickup:      stop["pickup"] = pickup
         if pickup_time: stop["pickup_time"] = pickup_time
         if drop:        stop["drop"] = drop
+        if drop_time:   stop["drop_time"] = drop_time
         if remarks:     stop["remarks"] = remarks
         if desc:        stop["description"] = desc
         stops.append(stop)
     return stops
+
+# Leading OCR'd bullet glyph (BUG3). Tesseract renders "•" as any of these.
+# Only strips when followed by whitespace + real content (capital/digit/quote/
+# paren/URL-ish), so a legitimate lowercase-leading term is never touched.
+_LEAD_BULLET = re.compile(r"^\s*[•·▪◦‣∙*+_,.\-–—©@¢°oe]\s+(?=[A-Z0-9\"'(h])")
+
+def _strip_lead_bullet(s: str) -> str:
+    return _LEAD_BULLET.sub("", s or "").strip()
+
 
 def parse_terms(text: str) -> List[str]:
     """Terms can be formatted as bullet lists (Jash, Nilesh) or as
@@ -428,8 +481,12 @@ def parse_terms(text: str) -> List[str]:
         return []
     block = m.group(1)
 
-    # Strategy A: bullet-based (e / * / • / ◆ / - / – / numeric)
-    items_a = re.split(r"\n\s*(?:[e\*•◆\-–]|\d+\.)\s+", block)
+    # Strategy A: bullet-based. Split on a newline followed by any OCR'd
+    # bullet glyph (e * _ + , . • · ◆ - – © @ o) or a numbered-list marker.
+    # Normalise the very first bullet too — it has no preceding newline, so
+    # inject one so the split treats it like the rest.
+    block_a = "\n" + block.lstrip()
+    items_a = re.split(r"\n\s*(?:[eo•·▪◦‣∙*+_,.©@◆\-–—]|\d+\.)\s+", block_a)
     parsed_a = []
     for item in items_a:
         it = _clean(item)
@@ -482,14 +539,18 @@ def parse_terms(text: str) -> List[str]:
     b_ok = parsed_b and not looks_fragmented(parsed_b)
 
     if a_ok and b_ok:
-        # Both look clean; prefer the one with more items
-        return parsed_a if len(parsed_a) >= len(parsed_b) else parsed_b
-    if a_ok:
-        return parsed_a
-    if b_ok:
-        return parsed_b
-    # Both look fragmented — fall back to whichever has more content
-    return parsed_a if len(parsed_a) >= len(parsed_b) else parsed_b
+        chosen = parsed_a if len(parsed_a) >= len(parsed_b) else parsed_b
+    elif a_ok:
+        chosen = parsed_a
+    elif b_ok:
+        chosen = parsed_b
+    else:
+        # Both look fragmented — fall back to whichever has more content
+        chosen = parsed_a if len(parsed_a) >= len(parsed_b) else parsed_b
+
+    # Final safety net (BUG3): strip any residual leading bullet glyph that
+    # survived either strategy (esp. Strategy B, which doesn't split on them).
+    return [_strip_lead_bullet(x) for x in chosen]
 
 
 def _match_thumbs_to_stops(pdf_path: str, thumb_dir: str,

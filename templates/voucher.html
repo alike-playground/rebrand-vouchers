@@ -108,6 +108,7 @@ table.stop-card { width: 100%; border-collapse: collapse; table-layout: fixed; m
 table.stop-card td { vertical-align: top; padding: 0; }
 table.stop-card td.title { padding-bottom: 1.5mm; }
 table.stop-card .title-txt { font-size: 10pt; font-weight: 700; color: {{ ink }}; }
+table.stop-card .badge { display: inline-block; font-size: 6.8pt; font-weight: 600; letter-spacing: 0.3pt; text-transform: uppercase; color: #fff; background: {{ orange }}; border-radius: 3pt; padding: 0.6mm 1.6mm; margin-left: 2mm; vertical-align: middle; }
 table.stop-card td.pd { width: 50%; padding-right: 4mm; font-size: 8.8pt; padding-bottom: 0.8mm; }
 table.stop-card td.pd .k { color: {{ orange }}; font-weight: 600; letter-spacing: 0.3pt; text-transform: uppercase; font-size: 7.5pt; display: block; margin-bottom: 0.5mm; }
 table.stop-card td.pd .v { color: {{ ink }}; }
@@ -308,7 +309,7 @@ table.stop-card td.desc { font-size: 8.8pt; color: #444; padding-top: 1.5mm; lin
         {% if day.stops and day.stops[0] %}
           {% set stop = day.stops[0] %}
           <table class="stop-card">
-            <tr><td class="title" colspan="2"><span class="title-txt">{{ stop.title }}</span></td></tr>
+            <tr><td class="title" colspan="2"><span class="title-txt">{{ stop.title }}</span>{% if stop.tour_type %}<span class="badge">{{ stop.tour_type }}</span>{% endif %}</td></tr>
             <tr>
               {% if stop.pickup %}
               <td class="pd"><span class="k">Pickup from</span><span class="v">{{ stop.pickup }}{% if stop.pickup_time %} · {{ stop.pickup_time }}{% endif %}</span></td>
@@ -332,7 +333,7 @@ table.stop-card td.desc { font-size: 8.8pt; color: #444; padding-top: 1.5mm; lin
       {# subsequent stops render individually below #}
       {% for stop in day.stops[1:] %}
       <table class="stop-card">
-        <tr><td class="title" colspan="2"><span class="title-txt">{{ stop.title }}</span></td></tr>
+        <tr><td class="title" colspan="2"><span class="title-txt">{{ stop.title }}</span>{% if stop.tour_type %}<span class="badge">{{ stop.tour_type }}</span>{% endif %}</td></tr>
         <tr>
           {% if stop.pickup %}
           <td class="pd"><span class="k">Pickup from</span><span class="v">{{ stop.pickup }}{% if stop.pickup_time %} · {{ stop.pickup_time }}{% endif %}</span></td>
